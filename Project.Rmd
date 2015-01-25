@@ -1,0 +1,113 @@
+Human Activity Recognition Analysis
+========================================================
+
+Summary:
+-------
+Using the data from a recent exercise correctness study (see http://groupware.les.inf.puc-rio.br/har), a predictive model for exercise correctness based on sensor data is built.
+
+The study asked 6 participants to perform weight lifts correctly and incorrectly and classified them in 5 categories (one correct, and four with common lifting mistakes). Data from sensors placed in the forearm, arm, and belt of the participants as well as in the dumbell used was recorded and associated with the correctness categories.
+
+In what follows, the data obtained from the study is described, exploratory analysis on the data is performed, data reduction heuristics are explained, the choice of a Random Forest approach as the prediction method is discussed and applied to a subset of the given data and cross-validated with the remaining data. Finally the model is applied to the given 20 test cases.
+
+
+Description of the Data:
+-----------------------
+
+The data from the study is obtained from the following site:
+```{r echo=2,size= 5}
+setwd("c:/users/silvio/documents/coursera/PracticalML/Project/")
+har <- read.csv("pml-training.csv",na.strings= c("NA", " ", ""))
+```
+The given data from the study consist of 19622 rows in 160 columns (variables). The response variable is classe
+
+```{r echo=TRUE,size= 5}
+levels(har$classe)
+```
+
+"A" means the exercise was performed correctly and "B-E" means it was not in different forms.
+
+The other 159 variables in the file are potential predictors. 7 of them are timestamps, names and other identifiers. The remaining 152 are statistics for several measurements in each of the 4 sensors (38 each). For example, the below are the 38 measurements for the dumbbell sensor:
+```{r echo=TRUE,size=5}
+colnames(har)[grep("_dumbbell", colnames(har))]
+```
+
+Exploratory Analysis:
+--------------------
+It appears reasonable, we should look for predictors of exercise correctness amongst the 152 variables that relate to sensor measurements. One could argue that perhaps some participants follow the instructions better than others and hence the participant name might be a predictor. That might be a follow up investigation in case we do not get a good model with the sensor variables alone. 
+```{r echo=TRUE,size=5}
+# get rid of 1st 7 variables: names, timestamps, etc
+har <-har[,-(1:7)]
+```
+
+Since we want to model using random forests in R, there is a limitation of 32 predictor variables in the implementation so we need to bring down those 152 potential predictors to below 32. Even without this restriction, one might argue, that a model with more than 32 predictors for this relatively simple classification is an overkill.
+
+Looking at the data, a lot of the variables show a huge number of "NAs"
+```{r echo=TRUE,size=5}
+# Find out variables with more than 1900 NAs
+nas <- apply(har, 2, function(x) { sum(is.na(x))})
+length(colnames(har[,nas > 19000]))
+```
+gives a list of 100 variables that satisfy that criteria (omitted so as not to clutter the document). Since that corresponds to more than 95% of the data from those variables as "NA", we can safely eliminate those variables as candidates for predictors.
+```{r echo=TRUE,size=5}
+# Take out variables with more than 1900 NAs
+har <- har[, -which(nas > 19000)]
+dim(har)
+```
+
+We are left with 53 variables (52 plus classe) as potential predictor candidates. We turn next to variables that do not vary much (small range) on the idea that those would likely not be good predictors. We get rid of any variable that has a sd/mean < 2.
+
+```{r echo=TRUE,size=5}
+# eliminate variables with small variance
+sds <- sapply(har[,-53], sd)
+means <- sapply(har[,-53], mean)
+har <- data.frame(har[, colnames(har[,abs(sds/means) > 2.0])], classe=har$classe)
+dim(har)
+```
+
+We are left thus with 30 predictors plus the response variable, classe. We are within the range acceptable for randomForest as implemented in R. We could keep going (e.g. apply PCA for further reduce the dimension), but it will come as a compromise of interpretation.
+
+Random Forest Model:
+-------------------
+
+First, we set separate the data into training and testing and set appart the testing set for a later cross-validation of our model.
+
+```{r echo=TRUE, size=5,warning=FALSE}
+suppressMessages(library(caret))
+set.seed(23548)
+inTrain <- createDataPartition(y=har$classe, p=0.7, list=F)
+training <- har[inTrain,]
+testing <- har[-inTrain,]
+dim(training); dim(testing)
+```
+
+
+Now we use randomForest() with the training subset and default arguments unless indicated (500 trees for the voting on the final model, mtry is chosen as the heuristic ~sqrt(30)):
+```{r echo=TRUE, size=5,warning=FALSE}
+suppressMessages(library(randomForest))
+set.seed(2345)
+fit <- randomForest(classe~., data = training, importance = T, ntree=500, mtry=5)
+print(fit)
+
+```
+The OOB error is less than 1% per randomForest estimate above.
+Also judging from the confusion matrix and the classification errors, we should have a good fit (unless we overfit it). we will know for sure in the next section when we cross-validate.
+
+Cross Validation:
+----------------
+We can now use the data set we put aside for cross-validation:
+```{r echo=TRUE, size=5,warning=FALSE}
+confusionMatrix(predict(fit, testing), testing$classe)
+```
+
+We can see that all the parameters are very good (e.g. over 99% classification accuracy). This seems to confirm the out-of-sample error estimate from the previous section.
+
+Test Cases:
+----------
+We can apply the model to the 20 test cases in the csv in the HAR site:
+```{r echo=2:3, size=5}
+setwd("c:/users/silvio/documents/coursera/PracticalML/Project/")
+harTest <- read.csv("pml-testing.csv",na.strings= c("NA", " ", ""))
+predict(fit, harTest)
+```
+
+Which, according to the grading site, they are all accurately predicted.
